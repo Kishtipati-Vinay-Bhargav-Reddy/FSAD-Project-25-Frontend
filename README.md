@@ -1,57 +1,95 @@
-# Online Assignment Submission & Grading System
+# 🎨 Online Assignment Submission System – Frontend
 
-A hackathon-ready full-stack app with role-based dashboards for teachers and students.
+## 📌 Project Overview
 
-## Tech Stack
-- Frontend: React + Vite + Tailwind CSS + Framer Motion
-- Backend: Node.js + Express
-- Database: MongoDB Atlas
-- Auth: JWT
-- File Uploads: Multer
+This is the frontend of the **Online Assignment Submission and Grading System** developed using React.js.
+It provides a user-friendly interface for students and faculty to interact with the system.
 
-## Quick Start
+---
 
-### 1) Backend
+## 🚀 Features
+
+* 🔐 User Authentication (Login/Register)
+* 📊 Dashboard View
+* 📚 View Assignments
+* 📤 Submit Assignments
+* ⚡ Real-time Form Validation
+* 🎨 Responsive UI with CSS
+
+---
+
+## 🛠️ Tech Stack
+
+* React.js
+* Axios
+* CSS / Bootstrap
+* React Router
+
+---
+
+## 📂 Project Structure
+
+src/
+├── components/
+├── pages/
+├── services/
+├── App.js
+├── index.js
+
+---
+
+## 🔗 API Integration
+
+The frontend communicates with the backend using REST APIs.
+
+Example:
+GET /api/assignments
+POST /api/login
+
+---
+
+## ⚙️ Installation & Setup
+
 ```bash
-cd server
+git clone https://github.com/your-username/frontend-repo.git
+cd frontend-repo
 npm install
+npm start
 ```
 
-Create a `.env` file based on [server/.env.example](server/.env.example).
+---
 
-```bash
-npm run dev
-```
+## 🌐 Backend URL
 
-### 2) Frontend
-```bash
-cd client
-npm install
-```
+Make sure backend is running on:
+http://localhost:8080
 
-Create a `.env` file based on [client/.env.example](client/.env.example).
+---
 
-```bash
-npm run dev
-```
+## 📸 Screenshots
 
-Visit `http://localhost:5173`.
+<img width="1919" height="910" alt="Screenshot 2026-04-08 100415" src="https://github.com/user-attachments/assets/551b207c-245a-44f6-bd5e-0cb2a3c8f38d" />
+<img width="1918" height="913" alt="Screenshot 2026-04-08 100447" src="https://github.com/user-attachments/assets/e5cf35ff-23cc-4a1c-ba0e-beaf998c1d30" />
+<img width="1919" height="908" alt="Screenshot 2026-04-08 100519" src="https://github.com/user-attachments/assets/e74e13be-490e-4134-a2c9-a88228049943" />
+<img width="1919" height="913" alt="Screenshot 2026-04-08 100559" src="https://github.com/user-attachments/assets/2a8953b7-9ca4-484b-9143-4f65dc9dbf8b" />
 
-## API Endpoints
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `GET /api/assignments`
-- `POST /api/assignments` (teacher only)
-- `POST /api/submissions` (student only)
-- `GET /api/submissions/mine` (student only)
-- `GET /api/submissions/:assignmentId` (teacher only)
-- `PUT /api/submissions/:id/grade` (teacher only)
-- `GET /api/dashboard/student`
-- `GET /api/dashboard/teacher`
 
-## Sample Test Data
-See [server/sample-data.json](server/sample-data.json) for example accounts and assignments.
+---
 
-## Notes
-- File uploads accept PDF, DOC, or DOCX (max 10MB).
-- Tokens expire in 7 days.
+## 👥 Team Contribution
+
+* Frontend Development: [Arjun]
+* UI Design: [Tarun Sai]
+
+---
+
+## 📌 Notes
+
+* Ensure backend is running before starting frontend
+* Update API base URL if needed
+
+---
+
+## 📄 License
+
+This project is developed for academic purposes.
