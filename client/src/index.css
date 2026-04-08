@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --glass-border: rgba(255, 255, 255, 0.12);
+  }
+
+  body {
+    min-height: 100vh;
+    font-family: "Space Grotesk", "Segoe UI", sans-serif;
+    background: radial-gradient(circle at top left, #0b6e6e 0%, transparent 45%),
+      radial-gradient(circle at 30% 20%, #ef9d6f 0%, transparent 40%),
+      linear-gradient(135deg, #0c1e25 0%, #101720 45%, #1f1b16 100%);
+    color: #f8fafc;
+  }
+
+  .font-display {
+    font-family: "Instrument Serif", "Times New Roman", serif;
+    letter-spacing: 0.01em;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid var(--glass-border);
+    border-radius: 20px;
+    backdrop-filter: blur(18px);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.3);
+  }
+
+  .input-field {
+    @apply w-full rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-200/50 focus:outline-none focus:ring-2 focus:ring-amber-200/60;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-full bg-amber-200/90 px-6 py-3 text-sm font-semibold text-slate-900 transition hover:bg-amber-100;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-full border border-white/20 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10;
+  }
+
+  .btn-pill {
+    @apply rounded-full border border-white/20 bg-white/5 px-4 py-2 text-xs uppercase tracking-[0.25em] text-slate-200/80 transition hover:bg-white/10;
+  }
+
+  .btn-pill-active {
+    @apply border-amber-200/60 bg-amber-200/20 text-amber-100;
+  }
+}
+
+.orb {
+  position: absolute;
+  width: 380px;
+  height: 380px;
+  border-radius: 999px;
+  opacity: 0.65;
+  filter: blur(0px);
+  animation: float 8s ease-in-out infinite;
+}
+
+.orb-teal {
+  top: -100px;
+  left: -60px;
+  background: radial-gradient(circle, rgba(64, 210, 192, 0.8) 0%, rgba(64, 210, 192, 0) 70%);
+}
+
+.orb-coral {
+  bottom: -140px;
+  right: -80px;
+  background: radial-gradient(circle, rgba(247, 152, 98, 0.8) 0%, rgba(247, 152, 98, 0) 70%);
+  animation-delay: 2s;
+}
+
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(18px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
