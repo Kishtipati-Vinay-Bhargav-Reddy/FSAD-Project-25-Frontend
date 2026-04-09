@@ -28,12 +28,14 @@ export const registerUser = async (user) => {
 
 export const fetchProfile = async (email) => {
   try {
-    const { data } = await api.get("/api/auth/profile", {
-      params: { email },
+    const response = await api.get("/api/auth/profile", {
+      params: {
+        ...(email && { email }),
+      },
     });
-    return data;
+    return response.data;
   } catch (error) {
-    console.error("PROFILE ERROR:", error.response?.data || error.message);
+    console.error(error);
     throw error;
   }
 };

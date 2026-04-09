@@ -1,99 +1,120 @@
 import api from "./api";
 
-// CREATE ASSIGNMENT
-export const createAssignment = async (assignment) => {
-  try {
-    const formattedDate = assignment.dueDate?.trim();
-    if (!formattedDate) {
-      throw new Error("Assignment deadline missing");
-    }
+const buildRequestConfig = (params = {}) => {
+  const safeParams = {
+    ...(params.courseCode && { courseCode: params.courseCode }),
+  };
 
-    const formData = new FormData();
-    formData.append("title", assignment.title?.trim() || "");
-    formData.append("description", assignment.description?.trim() || "");
-    formData.append("dueDate", formattedDate);
-    formData.append("courseCode", assignment.courseCode?.trim()?.toUpperCase() || "");
-    formData.append("courseName", assignment.courseName?.trim() || "");
-
-    if (assignment.questionFile) {
-      formData.append("questionFile", assignment.questionFile);
-    }
-
-    const { data } = await api.post("/assignments", formData, {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-    });
-
-    return data;
-  } catch (error) {
-    console.error("CREATE ERROR:", error.response?.data || error.message);
-    throw error;
-  }
+  return Object.keys(safeParams).length > 0 ? { params: safeParams } : undefined;
 };
 
-// GET ALL ASSIGNMENTS
+const buildTeacherCourseFilterConfig = (filters = {}) => {
+  const safeParams = {
+    ...(filters.status && { status: filters.status }),
+    ...(filters.studentName && { studentName: filters.studentName }),
+  };
+
+  return Object.keys(safeParams).length > 0 ? { params: safeParams } : undefined;
+};
+
+export const createAssignment = async (assignment) => {
+  const formattedDate = assignment.dueDate?.trim();
+
+  if (!formattedDate) {
+    throw new Error("Assignment deadline missing");
+  }
+
+  const formData = new FormData();
+  formData.append("title", assignment.title?.trim() || "");
+  formData.append("description", assignment.description?.trim() || "");
+  formData.append("dueDate", formattedDate);
+  formData.append("courseCode", assignment.courseCode?.trim()?.toUpperCase() || "");
+  formData.append("courseName", assignment.courseName?.trim() || "");
+
+  if (assignment.questionFile) {
+    formData.append("questionFile", assignment.questionFile);
+  }
+
+  const { data } = await api.post("/assignments", formData, {
+    headers: {
+      "Content-Type": "multipart/form-data",
+    },
+  });
+
+  return data;
+};
+
 export const fetchAssignments = async (courseCode) => {
   try {
-    const requestConfig = courseCode
-      ? { params: { courseCode } }
-      : undefined;
-
-    const { data } = await api.get("/assignments", requestConfig);
-    return data;
+    const response = await api.get(
+      "/assignments",
+      buildRequestConfig({ courseCode })
+    );
+    return response.data;
   } catch (error) {
-    console.error("FETCH ERROR:", error.response?.data || error.message);
-    return [];
+    console.error(error);
+    throw error;
   }
 };
 
 export const fetchCourses = async () => {
   try {
-    const { data } = await api.get("/assignments/courses");
-    return data;
+    const response = await api.get("/assignments/courses");
+    console.log("Courses API response:", response.data);
+    return response.data;
   } catch (error) {
-    console.error("COURSE FETCH ERROR:", error.response?.data || error.message);
-    return [];
+    console.error(error);
+    throw error;
+  }
+};
+
+export const fetchTeacherCourses = async () => {
+  try {
+    const response = await api.get("/teacher/courses");
+    console.log("Courses API response:", response.data);
+    return response.data;
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
+};
+
+export const fetchFilteredTeacherCourses = async (filters = {}) => {
+  try {
+    const requestConfig = buildTeacherCourseFilterConfig(filters);
+    const response = requestConfig
+      ? await api.get("/teacher/courses/filter", requestConfig)
+      : await api.get("/teacher/courses");
+    console.log("Filtered teacher courses API response:", response.data);
+    return response.data;
+  } catch (error) {
+    console.error(error);
+    throw error;
   }
 };
 
 export const createCourse = async (course) => {
-  try {
-    const { data } = await api.post("/assignments/courses", {
-      code: course.code?.trim()?.toUpperCase(),
-      name: course.name?.trim(),
-      department: course.department?.trim(),
-      term: course.term?.trim(),
-    });
+  const { data } = await api.post("/assignments/courses", {
+    code: course.code?.trim()?.toUpperCase(),
+    name: course.name?.trim(),
+    department: course.department?.trim(),
+    term: course.term?.trim(),
+  });
 
-    return data;
-  } catch (error) {
-    console.error("COURSE CREATE ERROR:", error.response?.data || error.message);
-    throw error;
-  }
+  return data;
 };
 
 export const removeCourse = async (courseCode) => {
-  try {
-    const { data } = await api.put(
-      `/assignments/courses/${encodeURIComponent(courseCode)}/remove`
-    );
+  const { data } = await api.put(
+    `/assignments/courses/${encodeURIComponent(courseCode)}/remove`
+  );
 
-    return data;
-  } catch (error) {
-    console.error("COURSE REMOVE ERROR:", error.response?.data || error.message);
-    throw error;
-  }
+  return data;
 };
 
 export const removeAssignment = async (assignmentId) => {
-  try {
-    const { data } = await api.put(`/assignments/${assignmentId}/remove`);
-    return data;
-  } catch (error) {
-    console.error("ASSIGNMENT REMOVE ERROR:", error.response?.data || error.message);
-    throw error;
-  }
+  const { data } = await api.put(`/assignments/${assignmentId}/remove`);
+  return data;
 };
 
 export const getAssignmentQuestionFileUrl = (assignmentId) =>

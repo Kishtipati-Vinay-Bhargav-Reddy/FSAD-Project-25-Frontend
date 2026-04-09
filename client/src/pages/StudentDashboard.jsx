@@ -10,7 +10,16 @@ import {
 import { submitAssignment, getFileUrl } from "../services/submissionService";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { formatDueDate } from "../utils/dateTime";
+import {
+  formatDueDate,
+  isDeadlinePassed,
+  isRecentlyUpdated,
+} from "../utils/dateTime";
+import {
+  DOCUMENT_ACCEPT,
+  validateDocumentFile,
+} from "../utils/fileValidation";
+import { getErrorMessage } from "../utils/apiError";
 
 const UNASSIGNED_COURSE = {
   code: "UNASSIGNED",
@@ -18,6 +27,8 @@ const UNASSIGNED_COURSE = {
   department: "General",
   term: "Existing assignments",
 };
+
+const GRADE_SEEN_STORAGE_PREFIX = "seen_grade_updates_";
 
 const normalizeCourseCode = (courseCode) =>
   courseCode?.trim()?.toUpperCase() || UNASSIGNED_COURSE.code;
@@ -53,10 +64,10 @@ const StudentDashboard = () => {
     assignments: [],
     submissions: [],
   });
-
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [selectedCourseCode, setSelectedCourseCode] = useState("");
+  const [submissionStatusFilter, setSubmissionStatusFilter] = useState("");
   const [form, setForm] = useState({
     assignmentId: "",
     file: null,
@@ -66,10 +77,7 @@ const StudentDashboard = () => {
 
   const loadDashboard = async () => {
     if (!user?.email) {
-      setData({
-        assignments: [],
-        submissions: [],
-      });
+      setData({ assignments: [], submissions: [] });
       setCourses([]);
       setLoading(false);
       return;
@@ -80,7 +88,6 @@ const StudentDashboard = () => {
       const [response, coursesData] = await Promise.all([
         fetchStudentDashboard({
           studentEmail: user.email,
-          studentName: user.name,
         }),
         fetchCourses(),
       ]);
@@ -90,9 +97,8 @@ const StudentDashboard = () => {
         submissions: response?.submissions || [],
       });
       setCourses(coursesData || []);
-    } catch (err) {
-      console.error(err);
-      pushToast("Unable to load dashboard.", "error");
+    } catch (error) {
+      pushToast(getErrorMessage(error, "Unable to load dashboard."), "error");
     } finally {
       setLoading(false);
     }
@@ -100,7 +106,44 @@ const StudentDashboard = () => {
 
   useEffect(() => {
     loadDashboard();
-  }, [user?.email, user?.name]);
+  }, [user?.email]);
+
+  const allAssignmentMap = useMemo(
+    () => new Map((data.assignments || []).map((assignment) => [assignment.id, assignment])),
+    [data.assignments]
+  );
+
+  useEffect(() => {
+    if (!user?.email || !data.submissions.length) {
+      return;
+    }
+
+    const storageKey = `${GRADE_SEEN_STORAGE_PREFIX}${user.email.toLowerCase()}`;
+    const seenGrades = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+    const nextSeenGrades = { ...seenGrades };
+    let hasNewSeenState = false;
+
+    data.submissions.forEach((submission) => {
+      if (
+        submission.status === "GRADED" &&
+        submission.gradedAt &&
+        isRecentlyUpdated(submission.gradedAt, 72) &&
+        seenGrades[submission.id] !== submission.gradedAt
+      ) {
+        const assignment = allAssignmentMap.get(submission.assignmentId);
+        pushToast(
+          `New grade received${assignment?.title ? ` for ${assignment.title}` : ""}.`,
+          "success"
+        );
+        nextSeenGrades[submission.id] = submission.gradedAt;
+        hasNewSeenState = true;
+      }
+    });
+
+    if (hasNewSeenState) {
+      window.localStorage.setItem(storageKey, JSON.stringify(nextSeenGrades));
+    }
+  }, [allAssignmentMap, data.submissions, pushToast, user?.email]);
 
   const activeCourseMap = useMemo(() => {
     const map = new Map();
@@ -125,7 +168,12 @@ const StudentDashboard = () => {
           courseCode === UNASSIGNED_COURSE.code || activeCourseMap.has(courseCode)
         );
       }),
-    [data.assignments, activeCourseMap]
+    [activeCourseMap, data.assignments]
+  );
+
+  const assignmentMap = useMemo(
+    () => new Map(visibleAssignments.map((assignment) => [assignment.id, assignment])),
+    [visibleAssignments]
   );
 
   const visibleAssignmentIds = useMemo(
@@ -201,12 +249,17 @@ const StudentDashboard = () => {
       visibleSubmissions.filter((submission) =>
         selectedAssignmentIds.has(submission.assignmentId)
       ),
-    [visibleSubmissions, selectedAssignmentIds]
+    [selectedAssignmentIds, visibleSubmissions]
   );
 
-  const assignmentMap = useMemo(
-    () => new Map(visibleAssignments.map((assignment) => [assignment.id, assignment])),
-    [visibleAssignments]
+  const filteredSelectedSubmissions = useMemo(
+    () =>
+      submissionStatusFilter
+        ? selectedSubmissions.filter(
+            (submission) => submission.status === submissionStatusFilter
+          )
+        : selectedSubmissions,
+    [selectedSubmissions, submissionStatusFilter]
   );
 
   const submissionMap = useMemo(() => {
@@ -221,6 +274,14 @@ const StudentDashboard = () => {
     return map;
   }, [selectedSubmissions]);
 
+  const selectedFormAssignment = useMemo(() => {
+    if (!form.assignmentId) {
+      return null;
+    }
+
+    return assignmentMap.get(Number(form.assignmentId)) || null;
+  }, [assignmentMap, form.assignmentId]);
+
   const selectedFormSubmission = useMemo(() => {
     if (!form.assignmentId) {
       return null;
@@ -229,12 +290,20 @@ const StudentDashboard = () => {
     return submissionMap.get(Number(form.assignmentId)) || null;
   }, [form.assignmentId, submissionMap]);
 
+  const selectedFormIsExpired = isDeadlinePassed(selectedFormAssignment?.dueDate);
+
   const dashboardStats = useMemo(
     () =>
       selectedCourse
         ? buildStats(selectedAssignments, selectedSubmissions)
         : buildStats(visibleAssignments, visibleSubmissions),
-    [selectedCourse, selectedAssignments, selectedSubmissions, visibleAssignments, visibleSubmissions]
+    [
+      selectedAssignments,
+      selectedCourse,
+      selectedSubmissions,
+      visibleAssignments,
+      visibleSubmissions,
+    ]
   );
 
   useEffect(() => {
@@ -244,7 +313,7 @@ const StudentDashboard = () => {
     ) {
       setSelectedCourseCode("");
     }
-  }, [selectedCourseCode, courseCards]);
+  }, [courseCards, selectedCourseCode]);
 
   useEffect(() => {
     setForm({
@@ -252,16 +321,34 @@ const StudentDashboard = () => {
       file: null,
     });
     setFileInputKey((prev) => prev + 1);
+    setSubmissionStatusFilter("");
   }, [selectedCourseCode]);
 
-  const handleFileChange = (e) => {
+  const handleFileChange = (event) => {
+    const nextFile = event.target.files?.[0] || null;
+    const validationError = validateDocumentFile(nextFile);
+
+    if (validationError) {
+      pushToast(validationError, "error");
+      event.target.value = "";
+      setForm((prev) => ({ ...prev, file: null }));
+      return;
+    }
+
     setForm((prev) => ({
       ...prev,
-      file: e.target.files[0],
+      file: nextFile,
     }));
   };
 
   const handleEditSubmission = (assignmentId) => {
+    const assignment = assignmentMap.get(assignmentId);
+
+    if (isDeadlinePassed(assignment?.dueDate)) {
+      pushToast("Deadline passed", "error");
+      return;
+    }
+
     setForm({
       assignmentId: String(assignmentId),
       file: null,
@@ -274,8 +361,8 @@ const StudentDashboard = () => {
     );
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
 
     if (!selectedCourse) {
       pushToast("Select a course first.", "error");
@@ -284,6 +371,18 @@ const StudentDashboard = () => {
 
     if (!form.assignmentId || !form.file) {
       pushToast("Select assignment and upload file.", "error");
+      return;
+    }
+
+    if (selectedFormIsExpired) {
+      pushToast("Deadline passed", "error");
+      return;
+    }
+
+    const validationError = validateDocumentFile(form.file);
+
+    if (validationError) {
+      pushToast(validationError, "error");
       return;
     }
 
@@ -301,15 +400,14 @@ const StudentDashboard = () => {
       await submitAssignment(formData);
 
       pushToast(
-        isEditingSubmission ? "Submission updated." : "Uploaded successfully!",
+        isEditingSubmission ? "Submission updated." : "Submitted successfully",
         "success"
       );
       setForm({ assignmentId: "", file: null });
       setFileInputKey((prev) => prev + 1);
       await loadDashboard();
-    } catch (err) {
-      console.error(err);
-      pushToast("Upload failed.", "error");
+    } catch (error) {
+      pushToast(getErrorMessage(error, "Upload failed."), "error");
     } finally {
       setSubmitting(false);
     }
@@ -454,7 +552,7 @@ const StudentDashboard = () => {
               <motion.div className="glass-panel p-6">
                 <SectionHeader
                   title="Submit Assignment"
-                  subtitle={`Upload your work only for assignments inside ${selectedCourse.name}. Submitted work can also be replaced here.`}
+                  subtitle={`Upload your work only for assignments inside ${selectedCourse.name}. Submitted work can still be replaced before the deadline.`}
                 />
 
                 {selectedAssignments.length === 0 ? (
@@ -471,10 +569,11 @@ const StudentDashboard = () => {
                       <select
                         className="input-field bg-transparent text-white mt-2"
                         value={form.assignmentId}
-                        onChange={(e) =>
+                        onChange={(event) =>
                           setForm((prev) => ({
                             ...prev,
-                            assignmentId: e.target.value,
+                            assignmentId: event.target.value,
+                            file: null,
                           }))
                         }
                       >
@@ -485,23 +584,35 @@ const StudentDashboard = () => {
                           Select assignment
                         </option>
 
-                        {selectedAssignments.map((assignment) => (
-                          <option
-                            key={assignment.id}
-                            value={assignment.id}
-                            style={{ backgroundColor: "#1e293b", color: "white" }}
-                          >
-                            {submissionMap.get(assignment.id)
-                              ? `${assignment.title} (Submitted)`
-                              : assignment.title}
-                          </option>
-                        ))}
+                        {selectedAssignments.map((assignment) => {
+                          const isExpired = isDeadlinePassed(assignment.dueDate);
+                          const hasSubmission = submissionMap.get(assignment.id);
+
+                          return (
+                            <option
+                              key={assignment.id}
+                              value={assignment.id}
+                              style={{ backgroundColor: "#1e293b", color: "white" }}
+                            >
+                              {`${assignment.title}${
+                                hasSubmission ? " (Submitted)" : ""
+                              }${isExpired ? " (Expired)" : ""}`}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
 
                     {selectedFormSubmission ? (
                       <div className="rounded-2xl border border-amber-200/30 bg-amber-200/10 px-4 py-3 text-sm text-slate-100">
-                        You already submitted this assignment. Uploading a new file will replace the old one and send it back for teacher review.
+                        You already submitted this assignment. Uploading a new file will replace
+                        the old one and send it back for teacher review.
+                      </div>
+                    ) : null}
+
+                    {selectedFormAssignment && selectedFormIsExpired ? (
+                      <div className="rounded-2xl border border-rose-300/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                        Deadline passed
                       </div>
                     ) : null}
 
@@ -514,24 +625,30 @@ const StudentDashboard = () => {
                         key={fileInputKey}
                         ref={fileInputRef}
                         type="file"
-                        accept=".pdf,.doc,.docx"
+                        accept={DOCUMENT_ACCEPT}
                         onChange={handleFileChange}
+                        disabled={selectedFormIsExpired}
                         className="input-field mt-2"
                       />
+                      <p className="text-xs text-slate-200/60 mt-2">
+                        Accepted formats: PDF, DOC, DOCX. Maximum size: 10MB.
+                      </p>
                     </div>
 
                     <button
                       className="btn-primary w-full"
                       type="submit"
-                      disabled={submitting}
+                      disabled={submitting || selectedFormIsExpired}
                     >
-                      {submitting
-                        ? selectedFormSubmission
-                          ? "Updating..."
-                          : "Uploading..."
-                        : selectedFormSubmission
-                          ? "Update submission"
-                          : "Submit assignment"}
+                      {selectedFormIsExpired
+                        ? "Deadline passed"
+                        : submitting
+                          ? selectedFormSubmission
+                            ? "Updating..."
+                            : "Uploading..."
+                          : selectedFormSubmission
+                            ? "Update submission"
+                            : "Submit assignment"}
                     </button>
                   </form>
                 )}
@@ -550,17 +667,39 @@ const StudentDashboard = () => {
                 ) : (
                   selectedAssignments.map((assignment) => {
                     const submission = submissionMap.get(assignment.id);
+                    const expired = isDeadlinePassed(assignment.dueDate);
+                    const hasNewGrade =
+                      submission?.status === "GRADED" &&
+                      isRecentlyUpdated(submission?.gradedAt, 72);
 
                     return (
                       <div
                         key={assignment.id}
-                        className="border border-white/10 p-4 rounded-xl mb-4"
+                        className={`border p-4 rounded-xl mb-4 ${
+                          hasNewGrade
+                            ? "border-emerald-300/40 bg-emerald-500/5"
+                            : expired
+                              ? "border-rose-300/40 bg-rose-500/5"
+                              : "border-white/10"
+                        }`}
                       >
-                        <h3 className="text-white font-semibold">
-                          {assignment.title}
-                        </h3>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-white font-semibold">
+                            {assignment.title}
+                          </h3>
+                          {expired ? (
+                            <span className="rounded-full bg-rose-500/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-rose-100">
+                              Expired
+                            </span>
+                          ) : null}
+                          {hasNewGrade ? (
+                            <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-100">
+                              NEW
+                            </span>
+                          ) : null}
+                        </div>
 
-                        <p className="text-sm text-slate-200/70">
+                        <p className="text-sm text-slate-200/70 mt-2">
                           Deadline: {formatDueDate(assignment.dueDate)}
                         </p>
 
@@ -592,7 +731,7 @@ const StudentDashboard = () => {
                             href={getFileUrl(submission.fileName)}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-block mt-2 text-blue-400 underline"
+                            className="inline-block mt-2 ml-0 sm:ml-4 text-blue-400 underline"
                           >
                             View File
                           </a>
@@ -603,8 +742,9 @@ const StudentDashboard = () => {
                             type="button"
                             className="btn-secondary mt-3"
                             onClick={() => handleEditSubmission(assignment.id)}
+                            disabled={expired}
                           >
-                            Edit submission
+                            {expired ? "Deadline passed" : "Edit submission"}
                           </button>
                         ) : null}
                       </div>
@@ -615,13 +755,36 @@ const StudentDashboard = () => {
             </div>
 
             <div className="mt-10 glass-panel p-6">
-              <SectionHeader
-                title="Submission Status"
-                subtitle="All submission records for the selected course."
-              />
+              <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                <SectionHeader
+                  title="Submission Status"
+                  subtitle="All submission records for the selected course."
+                />
 
-              {selectedSubmissions.length === 0 ? (
-                <p className="text-slate-300">No submissions yet for this course.</p>
+                <div className="w-full lg:w-64">
+                  <label className="text-xs uppercase tracking-[0.2em] text-slate-200/70">
+                    Filter by status
+                  </label>
+                  <select
+                    className="input-field bg-transparent text-white mt-2"
+                    value={submissionStatusFilter}
+                    onChange={(event) => setSubmissionStatusFilter(event.target.value)}
+                  >
+                    <option value="" style={{ backgroundColor: "#1e293b", color: "white" }}>
+                      All statuses
+                    </option>
+                    <option value="PENDING" style={{ backgroundColor: "#1e293b", color: "white" }}>
+                      Pending
+                    </option>
+                    <option value="GRADED" style={{ backgroundColor: "#1e293b", color: "white" }}>
+                      Graded
+                    </option>
+                  </select>
+                </div>
+              </div>
+
+              {filteredSelectedSubmissions.length === 0 ? (
+                <p className="text-slate-300">No submissions match this filter.</p>
               ) : (
                 <table className="w-full text-left">
                   <thead>
@@ -635,12 +798,22 @@ const StudentDashboard = () => {
                   </thead>
 
                   <tbody>
-                    {selectedSubmissions.map((submission) => {
+                    {filteredSelectedSubmissions.map((submission) => {
                       const assignment = assignmentMap.get(submission.assignmentId);
+                      const hasNewGrade =
+                        submission.status === "GRADED" &&
+                        isRecentlyUpdated(submission.gradedAt, 72);
 
                       return (
-                        <tr key={submission.id}>
-                          <td>{assignment?.title || submission.assignmentId}</td>
+                        <tr key={submission.id} className={hasNewGrade ? "bg-emerald-500/5" : ""}>
+                          <td>
+                            {assignment?.title || submission.assignmentId}
+                            {hasNewGrade ? (
+                              <span className="ml-2 rounded-full bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-emerald-100">
+                                NEW
+                              </span>
+                            ) : null}
+                          </td>
                           <td>{submission.status}</td>
                           <td>{submission.grade ?? "-"}</td>
                           <td>{submission.feedback ?? "-"}</td>

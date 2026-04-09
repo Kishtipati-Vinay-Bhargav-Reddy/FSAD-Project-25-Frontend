@@ -2,6 +2,18 @@ import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
+const getDashboardPath = (role) => {
+  if (role === 'teacher') {
+    return '/teacher';
+  }
+
+  if (role === 'admin') {
+    return '/admin';
+  }
+
+  return '/student';
+};
+
 const ProtectedRoute = ({ children, role }) => {
   const { user, loading } = useAuth();
 
@@ -18,7 +30,7 @@ const ProtectedRoute = ({ children, role }) => {
   }
 
   if (role && user.role !== role) {
-    return <Navigate to={user.role === 'teacher' ? '/teacher' : '/student'} replace />;
+    return <Navigate to={getDashboardPath(user.role)} replace />;
   }
 
   return children;

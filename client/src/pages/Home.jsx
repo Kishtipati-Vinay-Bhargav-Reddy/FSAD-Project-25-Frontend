@@ -13,7 +13,7 @@ const Home = () => (
         transition={{ duration: 0.8 }}
         className="glass-panel max-w-4xl mx-auto p-10"
       >
-        <p className="uppercase text-xs tracking-[0.3em] text-slate-200/70">Hackathon-ready platform</p>
+        <p className="uppercase text-xs tracking-[0.3em] text-slate-200/70"></p>
         <h1 className="font-display text-4xl md:text-5xl text-white mt-4 leading-tight">
           Online Assignment Submission & Grading System
         </h1>

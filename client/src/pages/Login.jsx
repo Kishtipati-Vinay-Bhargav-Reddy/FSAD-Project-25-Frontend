@@ -4,6 +4,40 @@ import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const validateLoginForm = ({ email, password }) => {
+  if (!email.trim()) {
+    return 'Email is required.';
+  }
+
+  if (!EMAIL_PATTERN.test(email.trim())) {
+    return 'Please enter a valid email address.';
+  }
+
+  if (!password) {
+    return 'Password is required.';
+  }
+
+  if (password.length < 6) {
+    return 'Password must be at least 6 characters long.';
+  }
+
+  return null;
+};
+
+const getDashboardPath = (role) => {
+  if (role === 'teacher') {
+    return '/teacher';
+  }
+
+  if (role === 'admin') {
+    return '/admin';
+  }
+
+  return '/student';
+};
+
 const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -20,7 +54,7 @@ const Login = () => {
 
   useEffect(() => {
     if (user) {
-      navigate(user.role === 'teacher' ? '/teacher' : '/student', { replace: true });
+      navigate(getDashboardPath(user.role), { replace: true });
     }
   }, [user, navigate]);
 
@@ -31,11 +65,22 @@ const Login = () => {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+
+    const validationError = validateLoginForm(form);
+
+    if (validationError) {
+      pushToast(validationError, 'error');
+      return;
+    }
+
     setLoading(true);
     try {
-      const loggedInUser = await login({ email: form.email, password: form.password });
+      const loggedInUser = await login({
+        email: form.email.trim(),
+        password: form.password
+      });
       pushToast(`Welcome back, ${loggedInUser.name}!`, 'success');
-      navigate(loggedInUser.role === 'teacher' ? '/teacher' : '/student');
+      navigate(getDashboardPath(loggedInUser.role));
     } catch (err) {
       pushToast(err?.response?.data?.error || 'Login failed. Try again.', 'error');
     } finally {
@@ -54,10 +99,14 @@ const Login = () => {
         <p className="text-xs uppercase tracking-[0.3em] text-slate-200/60">Secure access</p>
         <h1 className="font-display text-3xl text-white mt-3">Login to your dashboard</h1>
         <p className="text-sm text-slate-200/70 mt-2">
-          {form.roleHint === 'teacher' ? 'Teacher portal access' : 'Student portal access'}
+          {form.roleHint === 'teacher'
+            ? 'Teacher portal access'
+            : form.roleHint === 'admin'
+              ? 'Admin portal access'
+              : 'Student portal access'}
         </p>
 
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-4">
           <div>
             <label className="text-xs uppercase tracking-[0.2em] text-slate-200/70">Email</label>
             <input

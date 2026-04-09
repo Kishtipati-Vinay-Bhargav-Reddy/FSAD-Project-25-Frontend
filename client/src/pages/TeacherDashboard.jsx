@@ -7,18 +7,26 @@ import {
   createCourse,
   fetchAssignments,
   fetchCourses,
+  fetchFilteredTeacherCourses,
+  fetchTeacherCourses,
   getAssignmentQuestionFileUrl,
   removeAssignment,
   removeCourse,
 } from "../services/assignmentService";
 import {
+  downloadAssignmentZip,
   getAllSubmissions,
-  gradeSubmission,
   getFileUrl,
+  gradeSubmission,
 } from "../services/submissionService";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { formatDueDate } from "../utils/dateTime";
+import { formatDueDate, isDeadlinePassed } from "../utils/dateTime";
+import {
+  DOCUMENT_ACCEPT,
+  validateDocumentFile,
+} from "../utils/fileValidation";
+import { getErrorMessage } from "../utils/apiError";
 
 const EMPTY_ASSIGNMENT_FORM = {
   title: "",
@@ -66,11 +74,53 @@ const buildStats = (assignments, submissions) => {
   };
 };
 
-const getErrorMessage = (error, fallbackMessage) =>
-  error?.response?.data?.message ||
-  error?.response?.data ||
-  error?.message ||
-  fallbackMessage;
+const toArray = (value) => (Array.isArray(value) ? value : []);
+
+const filterSubmissionsLocally = (
+  submissions,
+  assignments,
+  courseCode,
+  assignmentId,
+  status,
+  studentName
+) => {
+  const normalizedCourseCode = courseCode?.trim()?.toUpperCase();
+  const normalizedStatus = status?.trim()?.toUpperCase();
+  const normalizedStudentName = studentName?.trim()?.toLowerCase();
+  const targetAssignmentId = assignmentId ? Number(assignmentId) : null;
+  const assignmentIdsForCourse = new Set(
+    toArray(assignments)
+      .filter((assignment) =>
+        normalizedCourseCode
+          ? normalizeCourseCode(assignment.courseCode) === normalizedCourseCode
+          : true
+      )
+      .map((assignment) => assignment.id)
+  );
+
+  return toArray(submissions).filter((submission) => {
+    if (normalizedCourseCode && !assignmentIdsForCourse.has(submission.assignmentId)) {
+      return false;
+    }
+
+    if (targetAssignmentId && submission.assignmentId !== targetAssignmentId) {
+      return false;
+    }
+
+    if (normalizedStatus && submission.status !== normalizedStatus) {
+      return false;
+    }
+
+    if (
+      normalizedStudentName &&
+      !submission.studentName?.toLowerCase().includes(normalizedStudentName)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+};
 
 const TeacherDashboard = () => {
   const { user, logout } = useAuth();
@@ -79,10 +129,16 @@ const TeacherDashboard = () => {
   const [courses, setCourses] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [allSubmissions, setAllSubmissions] = useState([]);
+  const [filteredSubmissions, setFilteredSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingFilteredSubmissions, setLoadingFilteredSubmissions] = useState(false);
 
   const [selectedCourseCode, setSelectedCourseCode] = useState("");
   const [selectedAssignment, setSelectedAssignment] = useState("");
+  const [submissionFilters, setSubmissionFilters] = useState({
+    status: "",
+    studentName: "",
+  });
 
   const [assignmentForm, setAssignmentForm] = useState(EMPTY_ASSIGNMENT_FORM);
   const [courseForm, setCourseForm] = useState(EMPTY_COURSE_FORM);
@@ -94,31 +150,66 @@ const TeacherDashboard = () => {
   const [removingAssignmentId, setRemovingAssignmentId] = useState(null);
   const [showCourseForm, setShowCourseForm] = useState(false);
   const [assignmentFileInputKey, setAssignmentFileInputKey] = useState(0);
+  const [downloadingZip, setDownloadingZip] = useState(false);
 
   useEffect(() => {
     loadDashboard();
   }, []);
 
+  const loadTeacherCourses = async (filters = {}) => {
+    const hasFilters = Boolean(filters.status || filters.studentName);
+    const loadRequest = hasFilters
+      ? fetchFilteredTeacherCourses(filters)
+      : fetchTeacherCourses();
+
+    try {
+      return await loadRequest;
+    } catch (error) {
+      if (!hasFilters) {
+        const fallbackCourses = await fetchCourses();
+        return fallbackCourses;
+      }
+
+      throw error;
+    }
+  };
+
   const loadDashboard = async () => {
     setLoading(true);
-    try {
-      const [coursesData, assignmentsData, submissionsData] = await Promise.all([
-        fetchCourses(),
-        fetchAssignments(),
-        getAllSubmissions(),
-      ]);
+    const [
+      coursesResult,
+      assignmentsResult,
+      submissionsResult,
+    ] = await Promise.allSettled([
+      loadTeacherCourses(),
+      fetchAssignments(),
+      getAllSubmissions(),
+    ]);
 
-      setCourses(coursesData || []);
-      setAssignments(assignmentsData || []);
-      setAllSubmissions(submissionsData || []);
-    } catch (error) {
+    const coursesData =
+      coursesResult.status === "fulfilled" ? toArray(coursesResult.value) : [];
+    const assignmentsData =
+      assignmentsResult.status === "fulfilled" ? toArray(assignmentsResult.value) : [];
+    const submissionsData =
+      submissionsResult.status === "fulfilled" ? toArray(submissionsResult.value) : [];
+
+    setCourses(coursesData);
+    setAssignments(assignmentsData);
+    setAllSubmissions(submissionsData);
+
+    const criticalError =
+      coursesResult.status === "rejected" &&
+      assignmentsResult.status === "rejected" &&
+      submissionsResult.status === "rejected";
+
+    if (criticalError) {
       pushToast(
-        getErrorMessage(error, "Unable to load dashboard."),
+        getErrorMessage(coursesResult.reason, "Unable to load dashboard."),
         "error"
       );
-    } finally {
-      setLoading(false);
     }
+
+    setLoading(false);
   };
 
   const courseCards = useMemo(() => {
@@ -186,6 +277,14 @@ const TeacherDashboard = () => {
     [assignments, selectedCourse]
   );
 
+  const selectedAssignmentDetails = useMemo(
+    () =>
+      selectedAssignments.find(
+        (assignment) => assignment.id === Number(selectedAssignment)
+      ) || null,
+    [selectedAssignment, selectedAssignments]
+  );
+
   const selectedAssignmentIds = useMemo(
     () => new Set(selectedAssignments.map((assignment) => assignment.id)),
     [selectedAssignments]
@@ -228,6 +327,10 @@ const TeacherDashboard = () => {
     setGrading({});
     setAssignmentForm({ ...EMPTY_ASSIGNMENT_FORM });
     setAssignmentFileInputKey((prev) => prev + 1);
+    setSubmissionFilters({
+      status: "",
+      studentName: "",
+    });
   }, [selectedCourseCode]);
 
   useEffect(() => {
@@ -241,6 +344,59 @@ const TeacherDashboard = () => {
       setGrading({});
     }
   }, [selectedAssignment, selectedAssignments]);
+
+  useEffect(() => {
+    if (!selectedCourse) {
+      setFilteredSubmissions([]);
+      return;
+    }
+
+    const loadFilteredSubmissions = async () => {
+      setLoadingFilteredSubmissions(true);
+      try {
+        const nextSubmissions = await getAllSubmissions({
+          courseCode: selectedCourse.code,
+          assignmentId: selectedAssignment || undefined,
+          status: submissionFilters.status || undefined,
+          studentName: submissionFilters.studentName || undefined,
+        });
+        setFilteredSubmissions(
+          filterSubmissionsLocally(
+            nextSubmissions,
+            assignments,
+            selectedCourse.code,
+            selectedAssignment || undefined,
+            submissionFilters.status || undefined,
+            submissionFilters.studentName || undefined
+          )
+        );
+      } catch (error) {
+        setFilteredSubmissions(
+          filterSubmissionsLocally(
+            allSubmissions,
+            assignments,
+            selectedCourse.code,
+            selectedAssignment || undefined,
+            submissionFilters.status || undefined,
+            submissionFilters.studentName || undefined
+          )
+        );
+        pushToast("Showing available submissions with local filtering.", "error");
+      } finally {
+        setLoadingFilteredSubmissions(false);
+      }
+    };
+
+    loadFilteredSubmissions();
+  }, [
+    pushToast,
+    allSubmissions,
+    assignments,
+    selectedAssignment,
+    selectedCourse,
+    submissionFilters.status,
+    submissionFilters.studentName,
+  ]);
 
   const handleCreateAssignment = async (e) => {
     e.preventDefault();
@@ -256,6 +412,13 @@ const TeacherDashboard = () => {
       !assignmentForm.dueDate
     ) {
       pushToast("Complete all assignment fields.", "error");
+      return;
+    }
+
+    const fileValidationError = validateDocumentFile(assignmentForm.questionFile);
+
+    if (fileValidationError) {
+      pushToast(fileValidationError, "error");
       return;
     }
 
@@ -322,7 +485,7 @@ const TeacherDashboard = () => {
 
   const handleGradeSubmit = async (id) => {
     const payload = grading[id];
-    const existingSubmission = selectedAssignmentSubmissions.find(
+    const existingSubmission = selectedCourseSubmissions.find(
       (submission) => submission.id === id
     );
     const gradeValue = payload?.grade ?? existingSubmission?.grade;
@@ -402,6 +565,26 @@ const TeacherDashboard = () => {
       );
     } finally {
       setRemovingAssignmentId(null);
+    }
+  };
+
+  const handleDownloadZip = async () => {
+    if (!selectedAssignmentDetails) {
+      pushToast("Select an assignment first.", "error");
+      return;
+    }
+
+    setDownloadingZip(true);
+    try {
+      await downloadAssignmentZip(
+        selectedAssignmentDetails.id,
+        selectedAssignmentDetails.title
+      );
+      pushToast("ZIP download started.", "success");
+    } catch (error) {
+      pushToast(getErrorMessage(error, "Unable to download ZIP."), "error");
+    } finally {
+      setDownloadingZip(false);
     }
   };
 
@@ -518,56 +701,60 @@ const TeacherDashboard = () => {
             </form>
           ) : null}
 
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {courseCards.map((course) => (
-              <button
-                key={course.code}
-                type="button"
-                className={`text-left rounded-[20px] border p-5 transition ${
-                  selectedCourse?.code === course.code
-                    ? "border-amber-200/70 bg-amber-200/10"
-                    : "border-white/10 bg-white/5 hover:bg-white/10"
-                }`}
-                onClick={() => setSelectedCourseCode(course.code)}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-200/60">
-                      {course.code}
-                    </p>
-                    <h3 className="mt-3 text-xl text-white font-display">
-                      {course.name}
-                    </h3>
-                    <p className="mt-2 text-sm text-slate-200/70">
-                      {course.department} | {course.term}
-                    </p>
+          {courseCards?.length > 0 ? (
+            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {courseCards.map((course) => (
+                <button
+                  key={course.code}
+                  type="button"
+                  className={`text-left rounded-[20px] border p-5 transition ${
+                    selectedCourse?.code === course.code
+                      ? "border-amber-200/70 bg-amber-200/10"
+                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                  }`}
+                  onClick={() => setSelectedCourseCode(course.code)}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-slate-200/60">
+                        {course.code}
+                      </p>
+                      <h3 className="mt-3 text-xl text-white font-display">
+                        {course.name}
+                      </h3>
+                      <p className="mt-2 text-sm text-slate-200/70">
+                        {course.department} | {course.term}
+                      </p>
+                    </div>
+
+                    <span className="btn-pill">{course.stats.totalAssignments}</span>
                   </div>
 
-                  <span className="btn-pill">{course.stats.totalAssignments}</span>
-                </div>
+                  <div className="grid grid-cols-2 gap-3 mt-5 text-sm text-slate-200/80">
+                    <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-3">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-200/60">
+                        Submissions
+                      </p>
+                      <p className="mt-2 text-lg text-white">
+                        {course.stats.submittedCount}
+                      </p>
+                    </div>
 
-                <div className="grid grid-cols-2 gap-3 mt-5 text-sm text-slate-200/80">
-                  <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-3">
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-200/60">
-                      Submissions
-                    </p>
-                    <p className="mt-2 text-lg text-white">
-                      {course.stats.submittedCount}
-                    </p>
+                    <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-3">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-200/60">
+                        Graded
+                      </p>
+                      <p className="mt-2 text-lg text-white">
+                        {course.stats.gradedCount}
+                      </p>
+                    </div>
                   </div>
-
-                  <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-3">
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-200/60">
-                      Graded
-                    </p>
-                    <p className="mt-2 text-lg text-white">
-                      {course.stats.gradedCount}
-                    </p>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-slate-300">No courses available</p>
+          )}
         </div>
 
         {selectedCourse ? (
@@ -663,14 +850,23 @@ const TeacherDashboard = () => {
                     <input
                       key={assignmentFileInputKey}
                       type="file"
-                      accept=".pdf,.doc,.docx"
+                      accept={DOCUMENT_ACCEPT}
                       className="input-field mt-2"
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const nextFile = e.target.files?.[0] || null;
+                        const validationError = validateDocumentFile(nextFile);
+
+                        if (validationError) {
+                          pushToast(validationError, "error");
+                          e.target.value = "";
+                          return;
+                        }
+
                         setAssignmentForm((prev) => ({
                           ...prev,
-                          questionFile: e.target.files?.[0] || null,
-                        }))
-                      }
+                          questionFile: nextFile,
+                        }));
+                      }}
                     />
                     <p className="text-xs text-slate-200/60 mt-2">
                       Upload a PDF or Word file containing the assignment questions.
@@ -698,14 +894,28 @@ const TeacherDashboard = () => {
                     No assignments created for this course yet.
                   </p>
                 ) : (
-                  selectedAssignments.map((assignment) => (
+                  selectedAssignments.map((assignment) => {
+                    const expired = isDeadlinePassed(assignment.dueDate);
+
+                    return (
                     <div
                       key={assignment.id}
-                      className="mb-4 border border-white/10 rounded-xl p-4"
+                      className={`mb-4 border rounded-xl p-4 ${
+                        expired
+                          ? "border-rose-300/40 bg-rose-500/5"
+                          : "border-white/10"
+                      }`}
                     >
                       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                         <div>
-                          <p className="text-white font-semibold">{assignment.title}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-white font-semibold">{assignment.title}</p>
+                            {expired ? (
+                              <span className="rounded-full bg-rose-500/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-rose-100">
+                                Expired
+                              </span>
+                            ) : null}
+                          </div>
                           <p className="text-slate-300 mt-2">{assignment.description}</p>
                           <p className="text-sm text-slate-200/70 mt-2">
                             Deadline: {formatDueDate(assignment.dueDate)}
@@ -732,57 +942,123 @@ const TeacherDashboard = () => {
                         </button>
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </motion.div>
             </div>
 
             <div className="mt-10 glass-panel p-6">
-              <SectionHeader
-                title="View Submissions"
-                subtitle="Select an assignment from this course to open grading only for that work."
-              />
+              <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
+                <SectionHeader
+                  title="View Submissions"
+                  subtitle="Filter by status, course selection, or student name without leaving the grading view."
+                />
 
-              <select
-                className="input-field bg-transparent text-white mb-4"
-                value={selectedAssignment}
-                onChange={(e) => setSelectedAssignment(e.target.value)}
-              >
-                <option value="" style={{ color: "black" }}>
-                  Select assignment
-                </option>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div>
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate-200/70">
+                      Status
+                    </label>
+                    <select
+                      className="input-field bg-transparent text-white mt-2"
+                      value={submissionFilters.status}
+                      onChange={(e) =>
+                        setSubmissionFilters((prev) => ({
+                          ...prev,
+                          status: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="" style={{ color: "black" }}>
+                        All statuses
+                      </option>
+                      <option value="PENDING" style={{ color: "black" }}>
+                        Pending
+                      </option>
+                      <option value="GRADED" style={{ color: "black" }}>
+                        Graded
+                      </option>
+                    </select>
+                  </div>
 
-                {selectedAssignments.map((assignment) => (
-                  <option
-                    key={assignment.id}
-                    value={assignment.id}
-                    style={{ color: "black" }}
-                  >
-                    {assignment.title}
+                  <div>
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate-200/70">
+                      Student name
+                    </label>
+                    <input
+                      className="input-field mt-2"
+                      placeholder="Search student"
+                      value={submissionFilters.studentName}
+                      onChange={(e) =>
+                        setSubmissionFilters((prev) => ({
+                          ...prev,
+                          studentName: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col lg:flex-row gap-4 mt-4">
+                <select
+                  className="input-field bg-transparent text-white"
+                  value={selectedAssignment}
+                  onChange={(e) => setSelectedAssignment(e.target.value)}
+                >
+                  <option value="" style={{ color: "black" }}>
+                    All assignments in this course
                   </option>
-                ))}
-              </select>
+
+                  {selectedAssignments.map((assignment) => (
+                    <option
+                      key={assignment.id}
+                      value={assignment.id}
+                      style={{ color: "black" }}
+                    >
+                      {assignment.title}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleDownloadZip}
+                  disabled={!selectedAssignmentDetails || downloadingZip}
+                >
+                  {downloadingZip ? "Preparing ZIP..." : "Download submissions ZIP"}
+                </button>
+              </div>
 
               {!selectedAssignment ? (
-                <p className="text-slate-300">
-                  Choose one assignment from {selectedCourse.name} to view and grade submissions.
+                <p className="text-slate-300 mt-4">
+                  Choose an assignment if you want one ZIP bundle; otherwise, keep grading across the whole selected course.
                 </p>
               ) : null}
 
-              {selectedAssignment && selectedAssignmentSubmissions.length === 0 ? (
-                <p className="text-slate-300">No submissions yet.</p>
+              {loadingFilteredSubmissions ? (
+                <p className="text-slate-300 mt-4">Loading submissions...</p>
               ) : null}
 
-              {selectedAssignmentSubmissions.map((submission) => (
+              {!loadingFilteredSubmissions && filteredSubmissions.length === 0 ? (
+                <p className="text-slate-300 mt-4">No submissions match the current filters.</p>
+              ) : null}
+
+              {!loadingFilteredSubmissions && filteredSubmissions.map((submission) => (
                 <div
                   key={submission.id}
-                  className="mb-4 border border-white/10 p-4 rounded-lg"
+                  className="mb-4 mt-4 border border-white/10 p-4 rounded-lg"
                 >
                   <p>
                     <b>Student:</b> {submission.studentName}
                   </p>
                   <p>
                     <b>Status:</b> {submission.status}
+                  </p>
+                  <p>
+                    <b>Grade:</b> {submission.grade ?? "-"}
                   </p>
 
                   {submission.fileName ? (
@@ -804,6 +1080,11 @@ const TeacherDashboard = () => {
                     placeholder="Grade (0-10)"
                     value={grading[submission.id]?.grade ?? submission.grade ?? ""}
                     onChange={(e) => {
+                      if (e.target.value === "") {
+                        handleGradeChange(submission.id, "grade", "");
+                        return;
+                      }
+
                       let value = Number(e.target.value);
                       if (value > 10) value = 10;
                       if (value < 0) value = 0;
